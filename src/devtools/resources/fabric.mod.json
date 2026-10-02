@@ -1,0 +1,19 @@
+{
+	"schemaVersion": 1,
+	"id": "svm_subtitles_dev",
+	"version": "0.0.0",
+	"name": "SVM Subtitles dev tools",
+	"description": "Development-only test harness. Not shipped.",
+	"environment": "*",
+	"entrypoints": {
+		"client": [
+			"io.github.harryforest2003.svmsubtitles.dev.SelfTestClient"
+		],
+		"voicechat": [
+			"io.github.harryforest2003.svmsubtitles.dev.SelfTestVoicechatPlugin"
+		]
+	},
+	"depends": {
+		"svm_subtitles": "*"
+	}
+}
