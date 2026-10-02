@@ -2,6 +2,8 @@ package io.github.harryforest2003.svmsubtitles.audio;
 
 import io.github.harryforest2003.svmsubtitles.config.SubtitlesConfig;
 
+import org.jspecify.annotations.Nullable;
+
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.function.Consumer;
@@ -25,6 +27,7 @@ public final class SpeechSegmenter {
 	private final Resampler resampler = new Resampler();
 	private final ArrayDeque<float[]> preroll = new ArrayDeque<>();
 	private final Consumer<Segment> sink;
+	private final @Nullable Progress progress;
 	private volatile Settings settings;
 
 	private float[] buffer = new float[16 * Resampler.OUTPUT_RATE];
@@ -36,9 +39,19 @@ public final class SpeechSegmenter {
 	private int trailingSilence;
 	private long lastFrameMillis;
 
+	/** Sees a sentence while it is still being spoken (for live captions). Must copy what it needs right away. */
+	public interface Progress {
+		void onProgress(float[] audio, int length, boolean whispering);
+	}
+
 	public SpeechSegmenter(Settings settings, Consumer<Segment> sink) {
+		this(settings, sink, null);
+	}
+
+	public SpeechSegmenter(Settings settings, Consumer<Segment> sink, @Nullable Progress progress) {
 		this.settings = settings;
 		this.sink = sink;
+		this.progress = progress;
 	}
 
 	public void setSettings(Settings settings) {
@@ -81,6 +94,8 @@ public final class SpeechSegmenter {
 			finish();
 		} else if (length >= s.maxClipMs() * SAMPLES_PER_MS) {
 			finish();
+		} else if (progress != null && voicedSamples >= s.minSpeechMs() * SAMPLES_PER_MS) {
+			progress.onProgress(buffer, length, whispered);
 		}
 	}
 

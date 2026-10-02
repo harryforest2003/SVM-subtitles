@@ -18,7 +18,7 @@ class LocalWhisperTranscriberTest {
 		try (LocalWhisperTranscriber whisper = LocalWhisperTranscriber.load(Path.of(System.getenv("SVM_TEST_MODEL")), 4)) {
 			float[] audio = TranscriptionService.benchmarkAudio();
 			long start = System.nanoTime();
-			String text = whisper.transcribe(audio, "en");
+			String text = whisper.transcribe(audio, new SpeechRequest("en", false, "")).text();
 			double seconds = (System.nanoTime() - start) / 1e9;
 			System.out.printf("%s: \"%s\" in %.2f s (%.2fx real time)%n", whisper.describe(), text, seconds, seconds / 11.0);
 			assertTrue(text.toLowerCase().contains("ask not what your country can do for you"), text);
@@ -30,7 +30,7 @@ class LocalWhisperTranscriberTest {
 		try (LocalWhisperTranscriber whisper = LocalWhisperTranscriber.load(Path.of(System.getenv("SVM_TEST_MODEL")), 4)) {
 			float[] audio = TranscriptionService.benchmarkAudio();
 			float[] shortClip = java.util.Arrays.copyOfRange(audio, 0, 8_000);
-			whisper.transcribe(shortClip, "en");
+			whisper.transcribe(shortClip, new SpeechRequest("en", false, ""));
 		}
 	}
 }

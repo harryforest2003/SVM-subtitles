@@ -23,12 +23,18 @@ final class LocalWhisperTranscriber implements Transcriber {
 	private final WhisperContext context;
 	private final String modelName;
 	private final int threads;
+	private final boolean multilingual;
 
 	private LocalWhisperTranscriber(WhisperJNI whisper, WhisperContext context, String modelName, int threads) {
 		this.whisper = whisper;
 		this.context = context;
 		this.modelName = modelName;
 		this.threads = threads;
+		this.multilingual = whisper.isMultilingual(context);
+	}
+
+	boolean isMultilingual() {
+		return multilingual;
 	}
 
 	static synchronized LocalWhisperTranscriber load(Path model, int threads) throws IOException {
@@ -47,11 +53,15 @@ final class LocalWhisperTranscriber implements Transcriber {
 	}
 
 	@Override
-	public synchronized String transcribe(float[] samples, String language) throws IOException {
+	public synchronized Transcript transcribe(float[] samples, SpeechRequest request) throws IOException {
+		boolean translate = request.translate() && multilingual;
 		WhisperFullParams params = new WhisperFullParams(WhisperSamplingStrategy.GREEDY);
 		params.nThreads = threads;
-		params.language = language;
-		params.translate = false;
+		params.language = translate || !multilingual ? (multilingual ? "auto" : "en") : request.language();
+		params.translate = translate;
+		if (!request.prompt().isEmpty()) {
+			params.initialPrompt = request.prompt();
+		}
 		params.noContext = true;
 		params.noTimestamps = true;
 		params.singleSegment = false;
@@ -72,7 +82,7 @@ final class LocalWhisperTranscriber implements Transcriber {
 		for (int i = 0; i < segments; i++) {
 			text.append(whisper.fullGetSegmentText(context, i));
 		}
-		return text.toString().trim();
+		return new Transcript(text.toString().trim(), null);
 	}
 
 	@Override

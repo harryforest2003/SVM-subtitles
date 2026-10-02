@@ -28,6 +28,10 @@ public final class SubtitlesConfig {
 	public Transcription transcription = new Transcription();
 	public Segmentation segmentation = new Segmentation();
 	public Chat chat = new Chat();
+	public Live live = new Live();
+	public Alerts alerts = new Alerts();
+	public Tts tts = new Tts();
+	public History history = new History();
 	public Server server = new Server();
 	public Client client = new Client();
 
@@ -36,6 +40,13 @@ public final class SubtitlesConfig {
 		public String backend = "auto";
 		/** Spoken language ("en", "de", "es", ...) or "auto". Models ending in ".en" only understand English. */
 		public String language = "en";
+		/** Turn speech in other languages into English text. Needs a multilingual model (no ".en"). */
+		public boolean translateToEnglish = false;
+		/** Tell Whisper the names of online players and the words below, so it spells them right. */
+		public boolean accuracyHints = true;
+		public List<String> vocabulary = new ArrayList<>(List.of(
+				"Minecraft", "creeper", "Enderman", "Nether", "redstone", "netherite", "villager", "Elytra", "spawn"
+		));
 		/** How many finished sentences may wait for the recogniser before the oldest is skipped. */
 		public int maxQueuedClips = 8;
 		/** Sentences that waited longer than this are skipped instead of showing up late. */
@@ -65,6 +76,49 @@ public final class SubtitlesConfig {
 		public String model = "whisper-1";
 		public int timeoutSeconds = 30;
 		public int parallelRequests = 2;
+		/** Voice audio is only sent unencrypted (http://) to your own network unless this is turned on. */
+		public boolean allowInsecureHttp = false;
+	}
+
+	public static final class Live {
+		/** Show what people say word by word while they're still talking. Only with the companion server. */
+		public boolean enabled = true;
+		/** How often the text is updated while someone talks. */
+		public int intervalMs = 1000;
+		/** Where live captions show on this client: "chat" (one line that fills in), "screen" (above the hotbar) or "off". */
+		public String display = "chat";
+		/** Server: show live captions in the action bar to players who don't have the mod. They can also use /subtitles live off. */
+		public boolean actionBar = true;
+	}
+
+	public static final class Alerts {
+		/** Play a sound and highlight the line when someone says your name or one of the words below. */
+		public boolean enabled = true;
+		public boolean ownName = true;
+		/** Nicknames and other words to watch for, e.g. "harry". */
+		public List<String> words = new ArrayList<>();
+		public String sound = "minecraft:block.note_block.pling";
+		public double volume = 1.0;
+	}
+
+	public static final class Tts {
+		/** Players can type /tts <message> and have it spoken in voice chat. Needs a companion server. */
+		public boolean enabled = true;
+		/** Leave empty to use the companion server from transcription.remote. Otherwise an OpenAI-style /v1/audio/speech URL. */
+		public String url = "";
+		/** Leave empty to reuse transcription.remote.apiKey. */
+		public String apiKey = "";
+		public String model = "piper";
+		/** Piper voice name (see rhasspy/piper-voices), or e.g. "alloy" for OpenAI. Empty = the server's default. */
+		public String voice = "";
+		public int maxLength = 200;
+		public int cooldownSeconds = 3;
+	}
+
+	public static final class History {
+		/** Keep what was said so operators can check reports with /subtitles history. */
+		public boolean enabled = true;
+		public int keepDays = 7;
 	}
 
 	public static final class Segmentation {
@@ -81,6 +135,8 @@ public final class SubtitlesConfig {
 	public static final class Chat {
 		/** &-colour codes (and &#RRGGBB) are supported. {player} becomes the clickable name, {text} the speech. */
 		public String format = "&8[&3Voice&8] &b{player}&7: &f{text}";
+		/** Same, for messages players typed with /tts. */
+		public String ttsFormat = "&8[&3TTS&8] &b{player}&7: &f{text}";
 		/** "auto" finds /msg, /tell, /w ... on the server. Use e.g. "/m {player} " to force one, or "none". */
 		public String privateMessageCommand = "auto";
 		public String hoverText = "Click to message {player}";
@@ -110,6 +166,8 @@ public final class SubtitlesConfig {
 		/** Transcribe whispers. Only players within whisper range see it. */
 		public boolean transcribeWhispers = true;
 		public boolean logToConsole = true;
+		/** Tell players when they join that voice chat is shown as text (and kept for moderation). */
+		public boolean joinNotice = true;
 	}
 
 	public static final class Client {
@@ -146,6 +204,9 @@ public final class SubtitlesConfig {
 			try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
 				GSON.toJson(this, writer);
 			}
+			if (!transcription.remote.apiKey.isEmpty() || !tts.apiKey.isEmpty()) {
+				FilePermissions.ownerOnly(file);
+			}
 		} catch (IOException e) {
 			LOGGER.error("Could not write {}", file, e);
 		}
@@ -159,7 +220,13 @@ public final class SubtitlesConfig {
 		if (chat == null) chat = new Chat();
 		if (server == null) server = new Server();
 		if (client == null) client = new Client();
+		if (live == null) live = new Live();
+		if (alerts == null) alerts = new Alerts();
+		if (tts == null) tts = new Tts();
+		if (history == null) history = new History();
 		if (chat.ignoredPhrases == null) chat.ignoredPhrases = new ArrayList<>();
+		if (transcription.vocabulary == null) transcription.vocabulary = new ArrayList<>();
+		if (alerts.words == null) alerts.words = new ArrayList<>();
 
 		transcription.backend = orDefault(transcription.backend, "auto").toLowerCase(Locale.ROOT);
 		transcription.language = orDefault(transcription.language, "en").toLowerCase(Locale.ROOT);
@@ -181,6 +248,22 @@ public final class SubtitlesConfig {
 		segmentation.minSpeechMs = clamp(segmentation.minSpeechMs, 0, 10_000);
 
 		chat.format = orDefault(chat.format, new Chat().format);
+		chat.ttsFormat = orDefault(chat.ttsFormat, new Chat().ttsFormat);
+		live.intervalMs = clamp(live.intervalMs, 300, 10_000);
+		live.display = orDefault(live.display, "chat").toLowerCase(Locale.ROOT);
+		if (!live.display.equals("chat") && !live.display.equals("screen") && !live.display.equals("off")) {
+			live.display = "chat";
+		}
+		alerts.sound = orDefault(alerts.sound, new Alerts().sound);
+		if (!(alerts.volume >= 0)) alerts.volume = 1.0;
+		alerts.volume = Math.min(alerts.volume, 2.0);
+		tts.url = orDefault(tts.url, "");
+		tts.apiKey = orDefault(tts.apiKey, "");
+		tts.model = orDefault(tts.model, "piper");
+		tts.voice = orDefault(tts.voice, "");
+		tts.maxLength = clamp(tts.maxLength, 1, 500);
+		tts.cooldownSeconds = clamp(tts.cooldownSeconds, 0, 3600);
+		history.keepDays = clamp(history.keepDays, 1, 365);
 		chat.privateMessageCommand = orDefault(chat.privateMessageCommand, "auto");
 		chat.hoverText = orDefault(chat.hoverText, "");
 		server.audience = orDefault(server.audience, "everyone").toLowerCase(Locale.ROOT);

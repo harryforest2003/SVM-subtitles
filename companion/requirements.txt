@@ -1,3 +1,5 @@
-numpy
-faster-whisper>=1.0
-# or, instead of faster-whisper: openai-whisper
+numpy>=1.26
+faster-whisper>=1.1,<2
+# Text-to-speech (optional; the server runs without it). GPL-3.0 licensed.
+piper-tts>=1.3,<2
+# Instead of faster-whisper you can use OpenAI's original package (needs PyTorch): openai-whisper

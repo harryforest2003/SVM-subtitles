@@ -1,13 +1,16 @@
 package io.github.harryforest2003.svmsubtitles;
 
 import io.github.harryforest2003.svmsubtitles.config.SubtitlesConfig;
+import io.github.harryforest2003.svmsubtitles.network.SubtitlePayload;
 import io.github.harryforest2003.svmsubtitles.network.SubtitlesStatusPayload;
 import io.github.harryforest2003.svmsubtitles.server.ServerSubtitles;
 import io.github.harryforest2003.svmsubtitles.server.SubtitlesCommand;
+import io.github.harryforest2003.svmsubtitles.server.TtsCommand;
 import io.github.harryforest2003.svmsubtitles.transcribe.TranscriptionService;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
@@ -26,8 +29,18 @@ public final class SvmSubtitles implements ModInitializer {
 	public void onInitialize() {
 		reloadConfig();
 		PayloadTypeRegistry.clientboundPlay().register(SubtitlesStatusPayload.TYPE, SubtitlesStatusPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(SubtitlePayload.TYPE, SubtitlePayload.CODEC);
 
-		CommandRegistrationCallback.EVENT.register((dispatcher, context, selection) -> SubtitlesCommand.register(dispatcher));
+		CommandRegistrationCallback.EVENT.register((dispatcher, context, selection) -> {
+			SubtitlesCommand.register(dispatcher);
+			TtsCommand.register(dispatcher);
+		});
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			ServerSubtitles subtitles = ServerSubtitles.get();
+			if (subtitles != null) {
+				subtitles.tick();
+			}
+		});
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerSubtitles::start);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerSubtitles::stop);
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> ServerSubtitles.onJoin(handler.player));

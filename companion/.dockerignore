@@ -1,0 +1,6 @@
+.api_key
+voices/
+.venv/
+__pycache__/
+*.pyc
+test_server.py

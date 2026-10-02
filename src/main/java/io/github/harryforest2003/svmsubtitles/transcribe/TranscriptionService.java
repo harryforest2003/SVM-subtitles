@@ -13,8 +13,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.RejectedExecutionException;
@@ -47,8 +50,11 @@ public final class TranscriptionService implements AutoCloseable {
 	private static final List<Consumer<Notice>> NOTICE_LISTENERS = new CopyOnWriteArrayList<>();
 	private static final List<Runnable> STATE_LISTENERS = new CopyOnWriteArrayList<>();
 	private static volatile @Nullable TranscriptionService shared;
+	private static volatile List<String> playerNames = List.of();
 
 	private final SubtitlesConfig.Transcription config;
+	private final SubtitlesConfig.Live liveConfig;
+	private final SubtitlesConfig.Tts ttsConfig;
 	private final List<String> ignoredPhrases;
 	private final Path modelsDir;
 	private final ThreadPoolExecutor executor;
@@ -56,6 +62,8 @@ public final class TranscriptionService implements AutoCloseable {
 	private final AtomicLong skipped = new AtomicLong();
 
 	private volatile @Nullable Transcriber transcriber;
+	private volatile @Nullable CompanionClient companion;
+	private volatile CompanionClient.Features features = CompanionClient.Features.NONE;
 	private volatile State state = State.STARTING;
 	private volatile String detail = "starting up";
 	private volatile boolean closed;
@@ -65,6 +73,8 @@ public final class TranscriptionService implements AutoCloseable {
 
 	private TranscriptionService(SubtitlesConfig config, Path dataDir) {
 		this.config = config.transcription;
+		this.liveConfig = config.live;
+		this.ttsConfig = config.tts;
 		this.ignoredPhrases = List.copyOf(config.chat.ignoredPhrases);
 		this.modelsDir = dataDir.resolve("models");
 		this.executor = new ThreadPoolExecutor(1, 1, 60, TimeUnit.SECONDS,
@@ -114,6 +124,14 @@ public final class TranscriptionService implements AutoCloseable {
 		}
 	}
 
+	/** Online player names, used as spelling hints. Called every few seconds from the game thread. */
+	public static void setPlayerNames(Collection<String> names) {
+		List<String> copy = names.stream().filter(n -> n != null && !n.isBlank()).sorted().limit(40).toList();
+		if (!copy.equals(playerNames)) {
+			playerNames = copy;
+		}
+	}
+
 	public static void addNoticeListener(Consumer<Notice> listener) {
 		NOTICE_LISTENERS.add(listener);
 	}
@@ -130,8 +148,78 @@ public final class TranscriptionService implements AutoCloseable {
 		return state;
 	}
 
+	/** The request every transcription uses right now: language, translation and spelling hints. */
+	public SpeechRequest request() {
+		return new SpeechRequest(config.language, config.translateToEnglish, prompt());
+	}
+
+	String prompt() {
+		if (!config.accuracyHints) {
+			return "";
+		}
+		StringBuilder prompt = new StringBuilder("Minecraft voice chat.");
+		List<String> names = playerNames;
+		if (!names.isEmpty()) {
+			prompt.append(" Players: ").append(String.join(", ", names)).append('.');
+		}
+		List<String> words = config.vocabulary.stream().filter(w -> !w.isBlank()).limit(40).toList();
+		if (!words.isEmpty()) {
+			prompt.append(' ').append(String.join(", ", words)).append('.');
+		}
+		return TextCleaner.sanitize(prompt.toString());
+	}
+
+	/** True when live captions can be shown: they only ever run on the companion server, never locally. */
+	public boolean supportsLive() {
+		return liveConfig.enabled && state == State.READY && features.stream() && companion != null;
+	}
+
+	public int liveIntervalMs() {
+		return liveConfig.intervalMs;
+	}
+
+	/** Sends new audio of a sentence that's still being spoken; completes with the text so far, or null. */
+	public CompletableFuture<@Nullable Transcript> streamPartial(UUID session, float[] chunk) {
+		CompanionClient client = companion;
+		if (client == null || !supportsLive()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		// No spelling hints here: on a second of audio they make Whisper "hear" the hinted words.
+		SpeechRequest request = new SpeechRequest(config.language, config.translateToEnglish, "");
+		return client.stream(session, chunk, request).thenApply(result -> {
+			if (result == null) {
+				return null;
+			}
+			String text = TextCleaner.clean(result.text(), ignoredPhrases);
+			return text == null ? null : new Transcript(text, result.language());
+		});
+	}
+
+	/** True when audio leaves this machine for a speech server (players are told so when they join). */
+	public boolean usesRemoteServer() {
+		Transcriber engine = transcriber;
+		if (engine != null) {
+			return !engine.isLocal();
+		}
+		return config.backend.equals("remote") || (!config.backend.equals("local") && !config.backend.equals("off") && !config.remote.url.isBlank());
+	}
+
+	public boolean supportsTts() {
+		CompanionClient client = companion;
+		return ttsConfig.enabled && client != null && client.hasSpeechEndpoint() && (features.tts() || !ttsConfig.url.isBlank());
+	}
+
+	/** Text-to-speech on the companion server (or the configured speech API). Completes with a WAV file. */
+	public CompletableFuture<byte[]> synthesize(String text) {
+		CompanionClient client = companion;
+		if (client == null || !supportsTts()) {
+			return CompletableFuture.failedFuture(new IllegalStateException("text-to-speech needs a companion speech server"));
+		}
+		return client.speech(text);
+	}
+
 	/** Transcribes a sentence in the background. The callback runs on a worker thread, only for real speech. */
-	public void submit(Segment segment, Consumer<String> onText) {
+	public void submit(Segment segment, Consumer<Transcript> onText) {
 		if (!isAccepting()) {
 			return;
 		}
@@ -155,7 +243,7 @@ public final class TranscriptionService implements AutoCloseable {
 				try {
 					float[] sample = benchmarkAudio();
 					long start = System.nanoTime();
-					String text = engine.transcribe(sample, config.language);
+					String text = engine.transcribe(sample, request()).text();
 					double seconds = (System.nanoTime() - start) / 1e9;
 					result.accept(String.format(Locale.ROOT, "Heard \"%s\" in %.1f s (%.0f s of audio, %s)",
 							text.strip(), seconds, sample.length / 16_000.0, engine.describe()));
@@ -180,6 +268,10 @@ public final class TranscriptionService implements AutoCloseable {
 			double rtf = realtimeFactor;
 			if (rtf >= 0) {
 				status.append(String.format(Locale.ROOT, ", %.2fx real time", rtf));
+			}
+			if (features.stream() || supportsTts()) {
+				status.append(features.stream() ? (liveConfig.enabled ? ", live captions on" : ", live captions off") : "")
+						.append(supportsTts() ? ", text-to-speech on" : "");
 			}
 			int queued = executor.getQueue().size();
 			if (queued > 0) {
@@ -218,14 +310,32 @@ public final class TranscriptionService implements AutoCloseable {
 		}
 	}
 
-	private void startRemote() throws IOException {
+	private void startRemote() throws IOException, InterruptedException {
 		if (config.remote.url.isBlank()) {
 			throw new IOException("transcription.backend is \"remote\" but transcription.remote.url is empty");
 		}
 		RemoteTranscriber remote = new RemoteTranscriber(config.remote);
+		CompanionClient client = new CompanionClient(config.remote, ttsConfig);
+		CompanionClient.Features found = client.fetchFeatures();
+		companion = client;
+		features = found;
 		executor.setMaximumPoolSize(config.remote.parallelRequests);
 		executor.setCorePoolSize(config.remote.parallelRequests);
-		becomeReady(remote, "");
+		StringBuilder extras = new StringBuilder();
+		if (found.stream() && liveConfig.enabled) {
+			extras.append(", live captions");
+		}
+		if (supportsTtsWith(client, found)) {
+			extras.append(", text-to-speech");
+		}
+		if (config.translateToEnglish && !found.translate() && found != CompanionClient.Features.NONE) {
+			notice("The speech server uses an English-only model, so translation is off. Start it with a multilingual model (e.g. --model small).", true);
+		}
+		becomeReady(remote, extras.toString());
+	}
+
+	private boolean supportsTtsWith(CompanionClient client, CompanionClient.Features found) {
+		return ttsConfig.enabled && client.hasSpeechEndpoint() && (found.tts() || !ttsConfig.url.isBlank());
 	}
 
 	private void startLocal(boolean auto) throws IOException, InterruptedException {
@@ -247,11 +357,22 @@ public final class TranscriptionService implements AutoCloseable {
 			local.close();
 			return;
 		}
+		if (config.translateToEnglish && !local.isMultilingual()) {
+			notice("Translation needs a multilingual model: set transcription.local.model to e.g. \"base-q5_1\" (no \".en\").", true);
+		}
+		if (!config.remote.url.isBlank() || !ttsConfig.url.isBlank()) {
+			// Local recognition, but text-to-speech can still come from a configured server.
+			try {
+				companion = new CompanionClient(config.remote, ttsConfig);
+			} catch (IOException e) {
+				notice("Text-to-speech server not usable: " + e.getMessage(), true);
+			}
+		}
 
 		float[] sample = benchmarkAudio();
 		double audioSeconds = sample.length / 16_000.0;
 		long start = System.nanoTime();
-		String heard = local.transcribe(sample, config.language);
+		String heard = local.transcribe(sample, new SpeechRequest("en", false, "")).text();
 		double seconds = (System.nanoTime() - start) / 1e9;
 		double rtf = seconds / audioSeconds;
 		LOGGER.info("Benchmark: {} transcribed {} s of audio in {} s ({}x real time): \"{}\"", local.describe(),
@@ -282,7 +403,7 @@ public final class TranscriptionService implements AutoCloseable {
 		notice("Voice subtitles are off: " + reason + "." + (hint == null ? "" : " " + hint), hint != null);
 	}
 
-	private void process(Segment segment, long queuedAt, Consumer<String> onText) {
+	private void process(Segment segment, long queuedAt, Consumer<Transcript> onText) {
 		Transcriber engine = transcriber;
 		if (engine == null || closed) {
 			return;
@@ -294,9 +415,10 @@ public final class TranscriptionService implements AutoCloseable {
 		}
 
 		long start = System.nanoTime();
-		String raw;
+		Transcript raw;
+		SpeechRequest request = request();
 		try {
-			raw = engine.transcribe(segment.samples(), config.language);
+			raw = engine.transcribe(segment.samples(), request);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			return;
@@ -315,9 +437,9 @@ public final class TranscriptionService implements AutoCloseable {
 			warnSlow();
 		}
 
-		String text = TextCleaner.clean(raw, ignoredPhrases);
+		String text = TextCleaner.clean(raw.text(), ignoredPhrases, request.prompt());
 		if (text != null && !closed) {
-			onText.accept(text);
+			onText.accept(new Transcript(text, request.translate() ? raw.language() : null));
 		}
 	}
 
@@ -385,6 +507,11 @@ public final class TranscriptionService implements AutoCloseable {
 		}
 		closed = true;
 		executor.shutdownNow();
+		CompanionClient client = companion;
+		companion = null;
+		if (client != null) {
+			client.close();
+		}
 		Transcriber engine = transcriber;
 		transcriber = null;
 		if (engine != null) {

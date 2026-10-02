@@ -68,4 +68,23 @@ public final class Wav {
 
 	public record Decoded(float[] samples, int sampleRate) {
 	}
+
+	/** Converts to 16-bit samples at another rate (linear interpolation; fine for playing back speech). */
+	public static short[] toPcm(float[] samples, int fromRate, int toRate) {
+		if (samples.length == 0 || fromRate <= 0) {
+			return new short[0];
+		}
+		int length = (int) ((long) samples.length * toRate / fromRate);
+		short[] out = new short[length];
+		double step = (double) fromRate / toRate;
+		for (int i = 0; i < length; i++) {
+			double position = i * step;
+			int index = (int) position;
+			float a = samples[Math.min(index, samples.length - 1)];
+			float b = samples[Math.min(index + 1, samples.length - 1)];
+			float value = (float) (a + (b - a) * (position - index));
+			out[i] = (short) Math.round(Math.max(-1f, Math.min(1f, value)) * 32767f);
+		}
+		return out;
+	}
 }

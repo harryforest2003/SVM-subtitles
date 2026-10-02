@@ -47,3 +47,7 @@ __pycache__/
 
 # logs from test runs
 logs/
+
+# companion server secrets and downloads
+companion/.api_key
+companion/voices/

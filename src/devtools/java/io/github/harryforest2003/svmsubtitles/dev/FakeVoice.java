@@ -26,6 +26,11 @@ final class FakeVoice {
 
 	/** Server mode: Opus-encode with Simple Voice Chat's encoder and deliver it as microphone packets. */
 	static void speakToServer(VoicechatServerApi api, ServerSubtitles subtitles, ServerPlayer player, boolean whispering) throws IOException {
+		speakToServer(api, subtitles, player, whispering, null);
+	}
+
+	static void speakToServer(VoicechatServerApi api, ServerSubtitles subtitles, ServerPlayer player, boolean whispering,
+			java.nio.file.@org.jspecify.annotations.Nullable Path wav) throws IOException {
 		VoicechatConnection connection = proxy(VoicechatConnection.class, name -> switch (name) {
 			case "getPlayer" -> api.fromServerPlayer(player);
 			case "isInGroup", "isDisabled" -> false;
@@ -34,7 +39,7 @@ final class FakeVoice {
 		});
 		OpusEncoder encoder = api.createEncoder();
 		try {
-			forEachFrame(frame -> {
+			forEachFrame(wav, frame -> {
 				subtitles.onMicrophonePacket(packet(api, connection, encoder.encode(frame), whispering));
 			});
 		} finally {
@@ -45,11 +50,12 @@ final class FakeVoice {
 
 	/** Client mode: hand the audio to the client as this player's own microphone. */
 	static void speakToClient() throws IOException {
-		forEachFrame(frame -> ClientSubtitles.INSTANCE.onOwnVoice(frame, false));
+		forEachFrame(null, frame -> ClientSubtitles.INSTANCE.onOwnVoice(frame, false));
 	}
 
-	private static void forEachFrame(java.util.function.Consumer<short[]> sink) throws IOException {
-		short[] audio = sampleAt48k();
+	private static void forEachFrame(java.nio.file.@org.jspecify.annotations.Nullable Path wav,
+			java.util.function.Consumer<short[]> sink) throws IOException {
+		short[] audio = sampleAt48k(wav);
 		long next = System.nanoTime();
 		for (int offset = 0; offset + FRAME <= audio.length; offset += FRAME) {
 			sink.accept(Arrays.copyOfRange(audio, offset, offset + FRAME));
@@ -75,10 +81,19 @@ final class FakeVoice {
 	}
 
 	/** The 16 kHz sample, upsampled to Simple Voice Chat's 48 kHz, with half a second of silence first. */
-	private static short[] sampleAt48k() throws IOException {
+	private static short[] sampleAt48k(java.nio.file.@org.jspecify.annotations.Nullable Path wav) throws IOException {
 		float[] audio;
-		try (InputStream in = FakeVoice.class.getResourceAsStream("/svm_subtitles/benchmark.wav")) {
-			audio = Wav.decode(in.readAllBytes()).samples();
+		if (wav != null) {
+			Wav.Decoded decoded = Wav.decode(java.nio.file.Files.readAllBytes(wav));
+			short[] pcm = Wav.toPcm(decoded.samples(), decoded.sampleRate(), 16_000);
+			audio = new float[pcm.length];
+			for (int i = 0; i < pcm.length; i++) {
+				audio[i] = pcm[i] / 32768f;
+			}
+		} else {
+			try (InputStream in = FakeVoice.class.getResourceAsStream("/svm_subtitles/benchmark.wav")) {
+				audio = Wav.decode(in.readAllBytes()).samples();
+			}
 		}
 		int lead = 24_000;
 		short[] out = new short[lead + audio.length * 3];

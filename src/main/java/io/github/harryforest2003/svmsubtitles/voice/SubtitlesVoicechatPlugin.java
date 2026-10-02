@@ -20,6 +20,8 @@ import java.util.UUID;
  * another plugin cancels (muted players, for example) never reaches us, just like it never reaches listeners.
  */
 public final class SubtitlesVoicechatPlugin implements VoicechatPlugin {
+	/** Players can turn text-to-speech up or down separately in Simple Voice Chat's volume settings. */
+	public static final String TTS_CATEGORY = "svm_tts";
 	private static final int PRIORITY = -100;
 
 	private static volatile @Nullable VoicechatServerApi serverApi;
@@ -41,7 +43,15 @@ public final class SubtitlesVoicechatPlugin implements VoicechatPlugin {
 
 	@Override
 	public void registerEvents(EventRegistration registration) {
-		registration.registerEvent(VoicechatServerStartedEvent.class, event -> serverApi = event.getVoicechat());
+		registration.registerEvent(VoicechatServerStartedEvent.class, event -> {
+			VoicechatServerApi api = event.getVoicechat();
+			serverApi = api;
+			api.registerVolumeCategory(api.volumeCategoryBuilder()
+					.setId(TTS_CATEGORY)
+					.setName("Text to speech")
+					.setDescription("Messages players typed with /tts")
+					.build());
+		});
 		registration.registerEvent(VoicechatServerStoppedEvent.class, event -> serverApi = null);
 		registration.registerEvent(MicrophonePacketEvent.class, event -> safely(() -> {
 			ServerSubtitles subtitles = ServerSubtitles.get();

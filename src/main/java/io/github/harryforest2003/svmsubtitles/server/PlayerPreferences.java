@@ -25,6 +25,7 @@ public final class PlayerPreferences {
 	private final Path file;
 	private final Set<UUID> optedOut = ConcurrentHashMap.newKeySet();
 	private final Set<UUID> hidden = ConcurrentHashMap.newKeySet();
+	private final Set<UUID> noLive = ConcurrentHashMap.newKeySet();
 
 	private PlayerPreferences(Path file) {
 		this.file = file;
@@ -38,6 +39,7 @@ public final class PlayerPreferences {
 				if (stored != null) {
 					if (stored.optedOut != null) preferences.optedOut.addAll(stored.optedOut);
 					if (stored.hidden != null) preferences.hidden.addAll(stored.hidden);
+					if (stored.noLive != null) preferences.noLive.addAll(stored.noLive);
 				}
 			} catch (IOException | JsonParseException e) {
 				LOGGER.error("Could not read {}", file, e);
@@ -52,6 +54,15 @@ public final class PlayerPreferences {
 
 	public boolean isHidden(UUID player) {
 		return hidden.contains(player);
+	}
+
+	/** True if this player turned live captions off (no action bar / on-screen updates, finished lines only). */
+	public boolean isLiveOff(UUID player) {
+		return noLive.contains(player);
+	}
+
+	public void setLiveOff(UUID player, boolean value) {
+		update(noLive, player, value);
 	}
 
 	public void setOptedOut(UUID player, boolean value) {
@@ -72,6 +83,7 @@ public final class PlayerPreferences {
 		Stored stored = new Stored();
 		stored.optedOut = new TreeSet<>(optedOut);
 		stored.hidden = new TreeSet<>(hidden);
+		stored.noLive = new TreeSet<>(noLive);
 		try {
 			Files.createDirectories(file.getParent());
 			try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
@@ -85,5 +97,6 @@ public final class PlayerPreferences {
 	private static final class Stored {
 		Set<UUID> optedOut;
 		Set<UUID> hidden;
+		Set<UUID> noLive;
 	}
 }

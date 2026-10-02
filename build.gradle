@@ -67,6 +67,12 @@ dependencies {
 	devtoolsCompileOnly "de.maxhenkel.voicechat:voicechat-api:${project.voicechat_api_version}"
 	localRuntime "maven.modrinth:simple-voice-chat:${project.voicechat_version}"
 
+	// Optional: settings screen in Mod Menu, built with Cloth Config. Neither is required at runtime.
+	compileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
+	compileOnly "maven.modrinth:cloth-config:${project.cloth_config_version}"
+	localRuntime "maven.modrinth:modmenu:${project.modmenu_version}"
+	localRuntime "maven.modrinth:cloth-config:${project.cloth_config_version}"
+
 	// whisper.cpp bindings (ships natives for Windows/Linux/macOS), bundled inside our jar.
 	implementation "io.github.givimad:whisper-jni:${project.whisper_jni_version}"
 	include "io.github.givimad:whisper-jni:${project.whisper_jni_version}"

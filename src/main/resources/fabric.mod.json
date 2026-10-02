@@ -3,7 +3,7 @@
 	"id": "svm_subtitles",
 	"version": "${version}",
 	"name": "SVM Subtitles",
-	"description": "Turns Simple Voice Chat speech into chat messages with the speaker's name, using OpenAI's Whisper speech recognition. Click a name to private message them.",
+	"description": "Turns Simple Voice Chat speech into chat messages with the speaker's name, using OpenAI's Whisper. Live captions, name alerts, English translation, text-to-speech and moderation history; heavy work can run on a separate speech server.",
 	"authors": [
 		"harryforest2003"
 	],
@@ -24,6 +24,9 @@
 		],
 		"voicechat": [
 			"io.github.harryforest2003.svmsubtitles.voice.SubtitlesVoicechatPlugin"
+		],
+		"modmenu": [
+			"io.github.harryforest2003.svmsubtitles.client.ModMenuIntegration"
 		]
 	},
 	"depends": {
@@ -32,5 +35,15 @@
 		"java": ">=25",
 		"fabric-api": "*",
 		"voicechat": ">=2.6.0"
-	}
+	},
+	"suggests": {
+		"modmenu": "*",
+		"cloth-config": "*"
+	},
+	"mixins": [
+		{
+			"config": "svm_subtitles.client.mixins.json",
+			"environment": "client"
+		}
+	]
 }

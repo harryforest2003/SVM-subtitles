@@ -38,6 +38,20 @@ class TextCleanerTest {
 	}
 
 	@Test
+	void stripsFormattingCodesAndControlCharacters() {
+		assertEquals("red text new line", TextCleaner.sanitize("§cred text\nnew\u202E line"));
+		assertEquals("hello world", clean("hello\u0000 §kworld"));
+	}
+
+	@Test
+	void dropsAnEchoOfTheSpellingHints() {
+		String prompt = "Minecraft voice chat. Players: Steve, Alex. creeper, Nether.";
+		assertNull(TextCleaner.clean("Minecraft voice chat.", IGNORED, prompt));
+		assertEquals("Steve", TextCleaner.clean("Steve", IGNORED, prompt));
+		assertEquals("Steve, there's a creeper", TextCleaner.clean("Steve, there's a creeper", IGNORED, prompt));
+	}
+
+	@Test
 	void capsVeryLongOutput() {
 		String text = clean("word ".repeat(200));
 		assertEquals(256, text.length());

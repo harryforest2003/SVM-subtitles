@@ -30,6 +30,14 @@ class WavTest {
 	}
 
 	@Test
+	void resamplesForPlayback() {
+		short[] out = Wav.toPcm(new float[]{0f, 1f}, 22_050, 48_000);
+		assertEquals(4, out.length);
+		assertEquals(0, out[0]);
+		assertEquals(32767, out[3]);
+	}
+
+	@Test
 	void rejectsOtherFiles() {
 		assertThrows(IOException.class, () -> Wav.decode("not audio at all".getBytes()));
 	}
